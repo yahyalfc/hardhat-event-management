@@ -57,6 +57,10 @@ contract EventContract {
       _;
   }
 
+function getVersion() public pure returns (string memory) {
+        return "Version 1.0"; // Hardcode or use the `version` variable
+    }
+
 // ----- Event host functions -----
 
   function create_event(bytes32 _event_id,
