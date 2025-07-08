@@ -19,5 +19,4 @@ deploy:
 	npx hardhat run scripts/deploy.js --network sepolia
 
 verify:
-	@echo "Verifying contract on Etherscan... syntax: make verify CONTRACT_ADDRESS "
-	npx hardhat verify --network sepolia
+	@echo "Syntax => npx hardhat verify --network sepolia CONTRACT_ADDRESS"
