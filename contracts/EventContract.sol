@@ -13,15 +13,15 @@ contract EventContract {
     bytes32 event_id; //unique
     bytes32 title;
     uint index;
-    uint64 max_per_customer;
+    uint256 max_per_customer;
     uint256 funds;
     bool exists;
     bool sale_active;
     bool buyback_active;
     bool per_customer_limit;
     uint256 deadline;
-    uint64[] available_tickets;
-    uint128[] ticket_prices;
+    uint256[] available_tickets;
+    uint256[] ticket_prices;
     address[] customers;
     mapping(address => Customer) tickets;
   }
@@ -30,9 +30,9 @@ contract EventContract {
     uint index;
     address addr;
     bool exists;
-    uint64 total_num_tickets;
-    uint128 total_paid;
-    uint64[] num_tickets;
+    uint256 total_num_tickets;
+    uint256 total_paid;
+    uint256[] num_tickets;
   }
 
   event EventCreated(bytes32 event_id);
@@ -61,10 +61,10 @@ contract EventContract {
 
   function create_event(bytes32 _event_id,
     bytes32 _title,
-    uint64[] calldata num_tickets,
-    uint128[] calldata _ticket_prices,
+    uint256[] calldata num_tickets,
+    uint256[] calldata _ticket_prices,
     bool _per_customer_limit,
-    uint64 _max_per_customer,
+    uint256 _max_per_customer,
     bool _sale_active,
     bool _buyback_active,
     uint256 _deadline) external {
@@ -90,10 +90,19 @@ contract EventContract {
       emit EventCreated(_event_id);
   }
 
+  // Add these events for better tracking:  
+  event TicketPurchased(bytes32 indexed event_id, address indexed customer, uint256 ticket_type, uint256 quantity, uint256 amount);
+  event TicketReturned(bytes32 indexed event_id, address indexed customer, uint256 refund_amount);
+  event FundsWithdrawn(bytes32 indexed event_id, address indexed owner, uint256 amount);
+  event EventDeleted(bytes32 indexed event_id);
+
   function withdraw_funds(bytes32 event_id) external eventExists(event_id) onlyHost(event_id) afterDeadline(event_id) {
     events[event_id].buyback_active = false;
     uint256 withdraw_amount = events[event_id].funds;
     events[event_id].funds = 0;
+
+    emit FundsWithdrawn(event_id, msg.sender, withdraw_amount);
+
 
     (bool success, ) = events[event_id].owner.call{value: withdraw_amount}("");
     require(success, "Withdrawal transfer failed.");
@@ -104,7 +113,7 @@ contract EventContract {
   }
 
   function get_tickets(bytes32 event_id, address customer) external view eventExists(event_id)
-        returns (uint64[] memory) {
+        returns (uint256[] memory) {
     return events[event_id].tickets[customer].num_tickets;
   }
 
@@ -121,11 +130,11 @@ contract EventContract {
     events[event_id].sale_active = true;
   }
 
-  function add_tickets(bytes32 event_id, uint64[] calldata additional_tickets) external eventExists(event_id) onlyHost(event_id) {
+  function add_tickets(bytes32 event_id, uint256[] calldata additional_tickets) external eventExists(event_id) onlyHost(event_id) {
     require(additional_tickets.length == events[event_id].available_tickets.length,
       "List of number of tickets to add must be of same length as existing list of tickets.");
 
-    for(uint64 i = 0; i < events[event_id].available_tickets.length ; i++) {
+    for(uint256 i = 0; i < events[event_id].available_tickets.length ; i++) {
       // Check for overflow (even though Solidity 0.8+ has built-in protection)
       require(events[event_id].available_tickets[i] + additional_tickets[i] >= events[event_id].available_tickets[i],
               "Cannot exceed maximum tickets");
@@ -133,7 +142,7 @@ contract EventContract {
     }
 }
 
-  function change_ticket_price(bytes32 event_id, uint64 ticket_type, uint128 new_price) external eventExists(event_id) onlyHost(event_id) {
+  function change_ticket_price(bytes32 event_id, uint256 ticket_type, uint256 new_price) external eventExists(event_id) onlyHost(event_id) {
     require(ticket_type < events[event_id].ticket_prices.length, "Ticket type does not exist.");
     events[event_id].ticket_prices[ticket_type] = new_price;
   }
@@ -144,6 +153,8 @@ contract EventContract {
       "Cannot delete event before a week has passed since deadline");
 
     uint old_index = events[event_id].index;
+        emit EventDeleted(event_id);
+
     delete events[event_id];
     
     // Handle array element removal correctly
@@ -157,7 +168,7 @@ contract EventContract {
 
 // ----- Customer functions -----
 
-  function buy_tickets(bytes32 event_id, uint64 ticket_type, uint64 requested_num_tickets) external payable beforeDeadline(event_id) {
+  function buy_tickets(bytes32 event_id, uint256 ticket_type, uint256 requested_num_tickets) external payable eventExists(event_id) beforeDeadline(event_id) {
     require(requested_num_tickets > 0);
     require(ticket_type < events[event_id].available_tickets.length, "Ticket type does not exist.");
     require(events[event_id].sale_active, "Ticket sale is closed by seller.");
@@ -166,7 +177,7 @@ contract EventContract {
     require(!events[event_id].per_customer_limit ||
       (events[event_id].tickets[msg.sender].total_num_tickets + requested_num_tickets <= events[event_id].max_per_customer),
       "Purchase surpasses max per customer.");
-    uint128 sum_price = uint128(requested_num_tickets)*uint128(events[event_id].ticket_prices[ticket_type]);
+    uint256 sum_price = uint256(requested_num_tickets)*uint256(events[event_id].ticket_prices[ticket_type]);
     require(msg.value >= sum_price, "Not enough ether was sent.");
 
     if(!events[event_id].tickets[msg.sender].exists) {
@@ -174,7 +185,7 @@ contract EventContract {
       events[event_id].tickets[msg.sender].addr = msg.sender;
       events[event_id].tickets[msg.sender].index = events[event_id].customers.length;
       events[event_id].customers.push(msg.sender);
-      events[event_id].tickets[msg.sender].num_tickets = new uint64[](events[event_id].available_tickets.length);
+      events[event_id].tickets[msg.sender].num_tickets = new uint256[](events[event_id].available_tickets.length);
     }
 
     events[event_id].tickets[msg.sender].total_num_tickets += requested_num_tickets;
@@ -185,6 +196,8 @@ contract EventContract {
 
     add_participation(event_id, msg.sender);
 
+    emit TicketPurchased(event_id, msg.sender, ticket_type, requested_num_tickets, sum_price);
+
     // Return excessive funds
     if(msg.value > sum_price) {
       (bool success, ) = msg.sender.call{value : msg.value - sum_price}("");
@@ -192,15 +205,15 @@ contract EventContract {
     }
   }
 
-  function return_tickets(bytes32 event_id) external beforeDeadline(event_id) {
+  function return_tickets(bytes32 event_id) external eventExists(event_id) beforeDeadline(event_id) {
     require(events[event_id].tickets[msg.sender].total_num_tickets > 0,
       "User does not own any tickets to this event.");
     require(events[event_id].buyback_active, "Ticket buyback has been deactivated by owner.");
     require(events[event_id].sale_active, "Ticket sale is locked, which disables buyback.");
 
-    uint return_amount = events[event_id].tickets[msg.sender].total_paid;
+    uint256 return_amount = events[event_id].tickets[msg.sender].total_paid;
 
-    for(uint64 i = 0; i < events[event_id].available_tickets.length ; i++) {
+    for(uint256 i = 0; i < events[event_id].available_tickets.length ; i++) {
       // Check for overflow when returning tickets
       require(events[event_id].available_tickets[i] + events[event_id].tickets[msg.sender].num_tickets[i] >= events[event_id].available_tickets[i],
               "Failed because returned tickets would increase ticket pool past storage limit.");
@@ -211,6 +224,8 @@ contract EventContract {
     delete_participation(event_id, msg.sender);
 
     events[event_id].funds -= return_amount;
+    emit TicketReturned(event_id, msg.sender, return_amount);
+
 
     (bool success, ) = msg.sender.call{value: return_amount}("");
     require(success, "Return transfer to customer failed.");
@@ -227,9 +242,9 @@ contract EventContract {
         bytes32 title,
         address owner,
         uint256 deadline,
-        uint64[] memory available_tickets,
-        uint64 max_per_customer,
-        uint128[] memory ticket_price,
+        uint256[] memory available_tickets,
+        uint256 max_per_customer,
+        uint256[] memory ticket_price,
         bool sale_active,
         bool buyback_active,
         bool per_customer_limit
@@ -272,7 +287,7 @@ contract EventContract {
   }
 
   function add_participation(bytes32 event_id, address customer_addr) internal {
-    for(uint64 i = 0; i < participation[customer_addr].length ; i++) {
+    for(uint256 i = 0; i < participation[customer_addr].length ; i++) {
       if (participation[customer_addr][i] == event_id) {
         return;
       }
@@ -282,7 +297,7 @@ contract EventContract {
 
   function delete_participation(bytes32 event_id, address customer_addr) internal {
     uint len = participation[customer_addr].length;
-    for(uint64 i = 0; i < len ; i++) {
+    for(uint256 i = 0; i < len ; i++) {
       if (participation[customer_addr][i] == event_id) {
         if (i != len - 1) {
           participation[customer_addr][i] = participation[customer_addr][len-1];
